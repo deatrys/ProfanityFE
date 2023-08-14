@@ -71,7 +71,6 @@ module Profanity
 	def self.set_terminal_title(title)
 		return if @title.eql?(title) # noop
 		@title = title
-		@title.untaint
 		system("printf \"\033]0;#{title}\007\"")
 		Process.setproctitle(title)
 	end
@@ -378,9 +377,8 @@ kill_after = proc {
 
 fix_layout_number = proc { |str|
 	str = str.gsub('lines', Curses.lines.to_s).gsub('cols', Curses.cols.to_s)
-	str.untaint
 	begin
-		proc { $SAFE = 1; eval(str) }.call.to_i
+		proc { eval(str) }.call.to_i
 	rescue
 		$stderr.puts $!
 		$stderr.puts $!.backtrace[0..1]
@@ -1512,6 +1510,26 @@ Thread.new {
 								need_update = true
 							end
 						end
+					# accepts (mostly) arbitrary progress bars with dynamic color codes, etc.
+					# useful for user defined progress bars (i.e. spell active timer, item cooldowns, etc.)
+					# example XML to trigger:
+					#  <arbProgress id='spellactivel' max='250' current='160' label='WaterWalking' colors='1589FF,000000'</arbProgress>
+					elsif xml =~ /^<arbProgress id='([a-zA-Z0-9]+)' max='(\d+)' current='(\d+)'(?: label='(.+?)')?(?: colors='(\S+?)')?/
+						bar = $1
+						max = $2.to_i
+						current = $3.to_i
+						current = max if current > max
+						label = $4
+						colors = $5
+						bg, fg = colors.split(',') if colors
+						if window = progress_handler[bar]
+							window.label = label if label
+							window.bg = [bg] if bg
+							window.fg = [fg] if fg
+							if window.update(current, max, force = true)
+								need_update = true
+							end
+						end
 					elsif xml == '<pushBold/>' or xml == '<b>'
 						h = { :start => start_pos }
 						if PRESET['monsterbold']
@@ -1622,7 +1640,6 @@ Thread.new {
 					elsif xml =~ /^<LaunchURL src="([^"]+)"/
             url = "\"https://www.play.net#{$1}\""
             @url = url
-            @url.untaint
             if RbConfig::CONFIG['host_os'] =~ /mswin|mingw|cygwin/
               system "start #{url} >/dev/null 2>&1 &"
             elsif RbConfig::CONFIG['host_os'] =~ /darwin/
